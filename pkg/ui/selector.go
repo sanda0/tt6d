@@ -4,41 +4,45 @@ import (
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
-var (
-	titleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#00FF00")).
-			MarginLeft(2)
-
-	itemStyle = lipgloss.NewStyle().
-			PaddingLeft(4)
-
-	selectedItemStyle = lipgloss.NewStyle().
-				PaddingLeft(2).
-				Foreground(lipgloss.Color("#00FF00")).
-				SetString("▸ ")
-
-	footerStyle = lipgloss.NewStyle().
-			MarginLeft(2).
-			MarginTop(1).
-			Foreground(lipgloss.Color("#888888"))
-)
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
 
 type model struct {
 	links    []string
 	cursor   int
 	selected map[int]bool
+	viewport struct {
+		start int
+		size  int
+	}
 }
 
 func (m model) Init() tea.Cmd {
+	// Initialize viewport with a reasonable size
+	m.viewport.size = 10
 	return nil
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.MouseMsg:
+		switch msg.Type {
+		case tea.MouseWheelUp:
+			if m.cursor > 0 {
+				m.cursor--
+			}
+		case tea.MouseWheelDown:
+			if m.cursor < len(m.links)-1 {
+				m.cursor++
+			}
+		}
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q":
@@ -54,11 +58,47 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor++
 			}
 
-		case " ", "enter":
+		case "pgup":
+			// Move cursor up by viewport size
+			m.cursor -= m.viewport.size
+			if m.cursor < 0 {
+				m.cursor = 0
+			}
+			m.viewport.start -= m.viewport.size
+			if m.viewport.start < 0 {
+				m.viewport.start = 0
+			}
+
+		case "pgdown":
+			// Move cursor down by viewport size
+			m.cursor += m.viewport.size
+			if m.cursor >= len(m.links) {
+				m.cursor = len(m.links) - 1
+			}
+			m.viewport.start += m.viewport.size
+			maxStart := len(m.links) - m.viewport.size
+			if m.viewport.start > maxStart {
+				m.viewport.start = maxStart
+			}
+			if m.viewport.start < 0 {
+				m.viewport.start = 0
+			}
+
+		case " ":
 			if m.selected[m.cursor] {
 				delete(m.selected, m.cursor)
 			} else {
 				m.selected[m.cursor] = true
+			}
+			// Move cursor down after selection if possible
+			if m.cursor < len(m.links)-1 {
+				m.cursor++
+			}
+
+		case "enter":
+			// Return selected files only if at least one is selected
+			if len(m.selected) > 0 {
+				return m, tea.Quit
 			}
 
 		case "a":
@@ -70,6 +110,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "n":
 			// Deselect all
 			m.selected = make(map[int]bool)
+
+		case "pageup":
+			// Scroll up
+			if m.viewport.start > 0 {
+				m.viewport.start--
+				if m.viewport.start < m.cursor {
+					m.cursor = m.viewport.start
+				}
+			}
+
+		case "pagedown":
+			// Scroll down
+			if m.viewport.start+m.viewport.size < len(m.links) {
+				m.viewport.start++
+				if m.viewport.start+m.viewport.size > m.cursor {
+					m.cursor = m.viewport.start + m.viewport.size - 1
+				}
+			}
 		}
 	}
 
@@ -77,17 +135,38 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
-	s := titleStyle.Render("Select MP4 files to download") + "\n\n"
+	s := titleStyle.Render("Select MP4 Files to Download") + "\n"
 
-	for i, link := range m.links {
+	// Show selection stats
+	selectedCount := len(m.selected)
+	totalCount := len(m.links)
+	s += fmt.Sprintf("\nSelected: %d/%d files", selectedCount, totalCount) + "\n\n"
+
+	// Adjust viewport if cursor is out of view
+	if m.cursor < m.viewport.start {
+		m.viewport.start = m.cursor
+	} else if m.cursor >= m.viewport.start+m.viewport.size {
+		m.viewport.start = m.cursor - m.viewport.size + 1
+	}
+
+	// Show page indicator if there are more items
+	if m.viewport.start > 0 {
+		s += "  ↑ More files above ↑\n"
+	}
+
+	// Show visible items
+	end := min(m.viewport.start+m.viewport.size, len(m.links))
+	for i := m.viewport.start; i < end; i++ {
+		link := m.links[i]
+
 		cursor := " "
 		if m.cursor == i {
 			cursor = "▸"
 		}
 
-		checked := " "
+		checked := "[ ]"
 		if m.selected[i] {
-			checked = "✓"
+			checked = "[✓]"
 		}
 
 		// Shorten the link for display if it's too long
@@ -96,7 +175,7 @@ func (m model) View() string {
 			displayLink = displayLink[:35] + "..." + displayLink[len(displayLink)-32:]
 		}
 
-		item := fmt.Sprintf("%s [%s] %s", cursor, checked, displayLink)
+		item := fmt.Sprintf("%s %s %s", cursor, checked, displayLink)
 
 		if m.cursor == i {
 			s += selectedItemStyle.Render(item)
@@ -106,7 +185,14 @@ func (m model) View() string {
 		s += "\n"
 	}
 
-	s += "\n" + footerStyle.Render("↑/↓: navigate • space: toggle • a: select all • n: deselect all • enter: confirm • q: quit")
+	// Show page indicator if there are more items
+	if end < len(m.links) {
+		s += "  ↓ More files below ↓\n"
+	}
+
+	// Help footer
+	s += "\n" + footerStyle.Render("Navigation: ↑/↓ or j/k • PageUp/PageDown")
+	s += "\n" + footerStyle.Render("Actions: space: toggle • a: select all • n: none • enter: download • q: quit")
 
 	return s
 }

@@ -11,31 +11,40 @@ import (
 	"strings"
 )
 
-// ExtractLinks extracts MP4 links from the given URL
-func ExtractLinks(pageURL string) ([]string, error) {
+// ExtractContent extracts either TV series info or generic MP4 links from a URL
+func ExtractContent(pageURL string) ([]string, *TVSeriesInfo, error) {
 	resp, err := http.Get(pageURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch page: %v", err)
+		return nil, nil, fmt.Errorf("failed to fetch page: %v", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("page returned status code: %d", resp.StatusCode)
+		return nil, nil, fmt.Errorf("page returned status code: %d", resp.StatusCode)
 	}
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %v", err)
+		return nil, nil, fmt.Errorf("failed to read response body: %v", err)
 	}
 	bodyString := string(bodyBytes)
 
 	// Check if this is a todaytvseries domain
 	domainCheck := regexp.MustCompile(`todaytvseries\d*\.com`)
 	if !domainCheck.MatchString(pageURL) {
-		return extractGenericMP4Links(bodyString, pageURL)
+		links, err := extractGenericMP4Links(bodyString, pageURL)
+		return links, nil, err
 	}
 
-	return extractTVSeriesLinks(bodyString, pageURL)
+	// Try to extract TV series info
+	info, err := ExtractTVSeriesInfo(bodyString)
+	if err != nil {
+		// Fallback to generic MP4 links
+		links, err := extractGenericMP4Links(bodyString, pageURL)
+		return links, nil, err
+	}
+
+	return nil, info, nil
 }
 
 // extractTVSeriesLinks extracts links from TodayTVSeries pages

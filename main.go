@@ -38,23 +38,27 @@ func main() {
 	}
 
 	fmt.Printf("Fetching page: %s\n", pageURL)
-	mp4Links, err := extractor.ExtractLinks(pageURL)
+	links, seriesInfo, err := extractor.ExtractContent(pageURL)
 	if err != nil {
-		fmt.Printf("Error extracting MP4 links: %v\n", err)
+		fmt.Printf("Error extracting content: %v\n", err)
 		os.Exit(1)
 	}
 
-	if len(mp4Links) == 0 {
-		fmt.Println("No MP4 links found on the page")
-		return
+	var selectedLinks []string
+	if seriesInfo != nil {
+		fmt.Printf("Found TV Series: %s\n", seriesInfo.Title)
+		selectedLinks, err = ui.SelectTVSeriesEpisodes(seriesInfo)
+	} else {
+		if len(links) == 0 {
+			fmt.Println("No MP4 links found on the page")
+			return
+		}
+		fmt.Printf("Found %d MP4 links\n", len(links))
+		selectedLinks, err = ui.GetSelectedLinks(links)
 	}
 
-	fmt.Printf("Found %d MP4 links\n", len(mp4Links))
-
-	// Let user select which files to download
-	selectedLinks, err := ui.GetSelectedLinks(mp4Links)
 	if err != nil {
-		if err.Error() == "no files selected" {
+		if err.Error() == "no files selected" || err.Error() == "no episodes selected" {
 			fmt.Println("\nNo files selected for download")
 			return
 		}
