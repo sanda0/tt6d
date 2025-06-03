@@ -55,13 +55,17 @@ func ExtractTVSeriesInfo(bodyString string) (*TVSeriesInfo, error) {
 		episodeRe := regexp.MustCompile(episodePattern)
 		episodeMatches := episodeRe.FindAllStringSubmatch(bodyString, -1)
 
-		var episodes []Episode
+		// Use a map to deduplicate episodes
+		episodeMap := make(map[string]Episode)
 		for _, match := range episodeMatches {
 			if len(match) < 2 {
 				continue
 			}
 
-			episode := Episode{ID: match[1]}
+			epID := match[1]
+			if _, exists := episodeMap[epID]; !exists {
+				episodeMap[epID] = Episode{ID: epID}
+			}
 
 			// Find download links for this episode
 			linkPatterns := []string{
@@ -71,18 +75,26 @@ func ExtractTVSeriesInfo(bodyString string) (*TVSeriesInfo, error) {
 				fmt.Sprintf(`%s.*?<a[^>]+href=['"]([^'"]+)['"]`, regexp.QuoteMeta(match[1])),
 			}
 
+			ep := episodeMap[epID]
 			for _, pattern := range linkPatterns {
 				re := regexp.MustCompile(pattern)
 				linkMatch := re.FindStringSubmatch(bodyString)
 				if len(linkMatch) > 1 {
-					episode.Links = append(episode.Links, linkMatch[1])
+					ep.Links = append(ep.Links, linkMatch[1])
+					episodeMap[epID] = ep
 					break
 				}
 			}
 
-			if len(episode.Links) > 0 {
-				episodes = append(episodes, episode)
+			if len(episodeMap[epID].Links) > 0 {
+				episodeMap[epID] = Episode{ID: epID, Links: episodeMap[epID].Links}
 			}
+		}
+
+		// Convert map to slice
+		var episodes []Episode
+		for _, ep := range episodeMap {
+			episodes = append(episodes, ep)
 		}
 
 		if len(episodes) > 0 {

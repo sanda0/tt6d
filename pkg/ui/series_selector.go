@@ -10,13 +10,15 @@ import (
 )
 
 type seriesModel struct {
-	title        string
-	seasons      []string
-	episodes     map[string][]extractor.Episode
-	cursor       int
-	selected     map[string]bool
-	currentState viewState
-	viewport     struct {
+	title         string
+	seasons       []string
+	episodes      map[string][]extractor.Episode
+	cursor        int
+	selected      map[string]bool
+	selectedEps   map[string]bool
+	currentState  viewState
+	currentSeason string
+	viewport      struct {
 		start int
 		size  int
 	}
@@ -38,30 +40,57 @@ func (m seriesModel) Init() tea.Cmd {
 func (m seriesModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+
 		switch msg.String() {
 		case "ctrl+c", "q":
+			if len(m.selectedEps) > 0 {
+				return m, tea.Quit
+			}
+			// If no episodes selected, treat as cancel
+			m.selectedEps = make(map[string]bool)
 			return m, tea.Quit
 
 		case "up", "k":
-			if m.cursor > 0 {
+			items := m.currentItems()
+			if len(items) > 0 && m.cursor > 0 {
 				m.cursor--
 			}
 
 		case "down", "j":
-			if m.cursor < len(m.currentItems())-1 {
+			items := m.currentItems()
+			if len(items) > 0 && m.cursor < len(items)-1 {
 				m.cursor++
+			}
+
+		case " ":
+			switch m.currentState {
+			case seasonSelect:
+				// Space toggles season selection but doesn't change screen
+				m.selected[m.seasons[m.cursor]] = !m.selected[m.seasons[m.cursor]]
+				if m.cursor < len(m.seasons)-1 {
+					m.cursor++
+				}
+			case episodeSelect:
+				// Space toggles episode selection
+				if episodes := m.episodes[m.currentSeason]; len(episodes) > 0 {
+					epID := episodes[m.cursor].ID
+					m.selectedEps[epID] = !m.selectedEps[epID]
+					if m.cursor < len(episodes)-1 {
+						m.cursor++
+					}
+				}
 			}
 
 		case "enter":
 			switch m.currentState {
 			case seasonSelect:
+				// Enter moves to episode selection screen
 				m.currentState = episodeSelect
+				m.currentSeason = m.seasons[m.cursor]
 				m.cursor = 0
 			case episodeSelect:
-				season := m.seasons[m.cursor]
-				m.selected[season] = !m.selected[season]
-			case confirmSelect:
-				if len(m.selected) > 0 {
+				// If we have selections, proceed with download
+				if len(m.selectedEps) > 0 {
 					return m, tea.Quit
 				}
 			}
@@ -70,25 +99,25 @@ func (m seriesModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.currentState > seasonSelect {
 				m.currentState--
 				m.cursor = 0
+			} else {
+				// Exit if we're at the season select screen
+				m.selectedEps = make(map[string]bool)
+				return m, tea.Quit
 			}
 
 		case "a":
-			switch m.currentState {
-			case seasonSelect:
-				m.selected = make(map[string]bool)
-				for _, season := range m.seasons {
-					m.selected[season] = true
-				}
-			case episodeSelect:
-				season := m.seasons[m.cursor]
-				for _, ep := range m.episodes[season] {
-					m.selected[ep.ID] = true
+			if m.currentState == episodeSelect {
+				// Select all episodes in current season
+				for _, ep := range m.episodes[m.currentSeason] {
+					m.selectedEps[ep.ID] = true
 				}
 			}
 
 		case "n":
 			// Deselect all
-			m.selected = make(map[string]bool)
+			if m.currentState == episodeSelect {
+				m.selectedEps = make(map[string]bool)
+			}
 		}
 	}
 
@@ -100,9 +129,9 @@ func (m seriesModel) currentItems() []string {
 	case seasonSelect:
 		return m.seasons
 	case episodeSelect:
-		if m.cursor < len(m.seasons) {
+		if episodes := m.episodes[m.currentSeason]; len(episodes) > 0 {
 			var eps []string
-			for _, ep := range m.episodes[m.seasons[m.cursor]] {
+			for _, ep := range episodes {
 				eps = append(eps, ep.ID)
 			}
 			return eps
@@ -139,36 +168,38 @@ func (m seriesModel) View() string {
 		}
 
 	case episodeSelect:
-		if m.cursor < len(m.seasons) {
-			season := m.seasons[m.cursor]
-			s += seasonStyle.Render(fmt.Sprintf("Season %s Episodes:", season)) + "\n\n"
+		s += seasonStyle.Render(fmt.Sprintf("Season %s Episodes:", m.currentSeason)) + "\n\n"
 
-			for i, ep := range m.episodes[season] {
-				cursor := " "
-				if m.cursor == i {
-					cursor = "▸"
-				}
-
-				checked := "[ ]"
-				if m.selected[ep.ID] {
-					checked = "[✓]"
-				}
-
-				item := fmt.Sprintf("%s %s %s", cursor, checked, ep.ID)
-
-				if m.cursor == i {
-					s += selectedItemStyle.Render(item)
-				} else {
-					s += itemStyle.Render(item)
-				}
-				s += "\n"
+		episodes := m.episodes[m.currentSeason]
+		for i, ep := range episodes {
+			cursor := " "
+			if m.cursor == i {
+				cursor = "▸"
 			}
+
+			checked := "[ ]"
+			if m.selectedEps[ep.ID] {
+				checked = "[✓]"
+			}
+
+			item := fmt.Sprintf("%s %s %s", cursor, checked, ep.ID)
+
+			if m.cursor == i {
+				s += selectedItemStyle.Render(item)
+			} else {
+				s += itemStyle.Render(item)
+			}
+			s += "\n"
 		}
 	}
 
 	// Help footer
-	s += "\n" + footerStyle.Render("Navigation: ↑/↓ or j/k • Enter: select • Esc: back")
-	s += "\n" + footerStyle.Render("Actions: space: toggle • a: select all • n: none • q: quit")
+	s += "\n" + footerStyle.Render("Navigation: ↑/↓ or j/k • Enter: next • Esc: back")
+	if m.currentState == episodeSelect {
+		s += "\n" + footerStyle.Render("Actions: space: select • a: select all • n: none • enter: confirm")
+	} else {
+		s += "\n" + footerStyle.Render("Actions: space: select • enter: next • q: quit")
+	}
 
 	return s
 }
@@ -187,6 +218,7 @@ func SelectTVSeriesEpisodes(info *extractor.TVSeriesInfo) ([]string, error) {
 		seasons:      seasons,
 		episodes:     info.Seasons,
 		selected:     make(map[string]bool),
+		selectedEps:  make(map[string]bool),
 		currentState: seasonSelect,
 	})
 
@@ -196,14 +228,26 @@ func SelectTVSeriesEpisodes(info *extractor.TVSeriesInfo) ([]string, error) {
 	}
 
 	finalModel := m.(seriesModel)
-	if len(finalModel.selected) == 0 {
+	if len(finalModel.selectedEps) == 0 {
 		return nil, fmt.Errorf("no episodes selected")
 	}
 
+	// Use a map to deduplicate links
+	linkMap := make(map[string]bool)
 	var selectedLinks []string
-	for season := range finalModel.selected {
-		for _, ep := range info.Seasons[season] {
-			selectedLinks = append(selectedLinks, ep.Links...)
+
+	// Collect unique links from selected episodes
+	for _, episodes := range info.Seasons {
+		for _, ep := range episodes {
+			if finalModel.selectedEps[ep.ID] {
+				// Only add links we haven't seen before
+				for _, link := range ep.Links {
+					if !linkMap[link] {
+						linkMap[link] = true
+						selectedLinks = append(selectedLinks, link)
+					}
+				}
+			}
 		}
 	}
 

@@ -23,8 +23,8 @@ func main() {
 	pageURL := os.Args[1]
 	downloadFolder := os.Args[2]
 
-	// Set concurrent downloads (default: 2)
-	concurrentDownloads := 2
+	// Set concurrent downloads (default: 1 for sequential downloads)
+	concurrentDownloads := 1
 	if len(os.Args) > 3 {
 		if n, err := strconv.Atoi(os.Args[3]); err == nil && n > 0 {
 			concurrentDownloads = n

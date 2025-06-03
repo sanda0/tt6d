@@ -14,25 +14,35 @@ import (
 	"tt6d/pkg/progress"
 )
 
-// Download downloads multiple files concurrently
+// Download downloads multiple files
 func Download(links []string, downloadFolder string, concurrentDownloads int) error {
-	var wg sync.WaitGroup
-	semaphore := make(chan struct{}, concurrentDownloads)
-
-	for i, link := range links {
-		wg.Add(1)
-		go func(index int, mp4URL string) {
-			defer wg.Done()
-			semaphore <- struct{}{}
-			defer func() { <-semaphore }()
-
-			if err := downloadFile(mp4URL, downloadFolder, index+1, len(links)); err != nil {
-				fmt.Printf("\n[%d/%d] Error downloading %s: %v\n", index+1, len(links), mp4URL, err)
+	if concurrentDownloads == 1 {
+		// Sequential download
+		for i, link := range links {
+			if err := downloadFile(link, downloadFolder, i+1, len(links)); err != nil {
+				fmt.Printf("\n[%d/%d] Error downloading %s: %v\n", i+1, len(links), link, err)
 			}
-		}(i, link)
-	}
+		}
+	} else {
+		// Concurrent download
+		var wg sync.WaitGroup
+		semaphore := make(chan struct{}, concurrentDownloads)
 
-	wg.Wait()
+		for i, link := range links {
+			wg.Add(1)
+			go func(index int, mp4URL string) {
+				defer wg.Done()
+				semaphore <- struct{}{}
+				defer func() { <-semaphore }()
+
+				if err := downloadFile(mp4URL, downloadFolder, index+1, len(links)); err != nil {
+					fmt.Printf("\n[%d/%d] Error downloading %s: %v\n", index+1, len(links), mp4URL, err)
+				}
+			}(i, link)
+		}
+
+		wg.Wait()
+	}
 	return nil
 }
 
