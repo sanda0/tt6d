@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -47,6 +48,10 @@ func (pw *Writer) Write(p []byte) (int, error) {
 	return n, err
 }
 
+var (
+	mutex sync.Mutex
+)
+
 func (pw *Writer) displayProgress() {
 	percentage := float64(pw.written) / float64(pw.total) * 100
 	if pw.total == 0 {
@@ -62,12 +67,26 @@ func (pw *Writer) displayProgress() {
 	writtenMB := float64(pw.written) / (1024 * 1024)
 	totalMB := float64(pw.total) / (1024 * 1024)
 
-	// Clear the line and print progress
-	fmt.Printf("\r[%d/%d] %s [%s] %.1f%% (%.1f/%.1f MB)",
-		pw.index, pw.totalFiles, pw.filename, bar, percentage, writtenMB, totalMB)
+	// Lock to prevent progress bars from mixing
+	mutex.Lock()
+	defer mutex.Unlock()
 
-	// If download is complete, print newline
+	// Move cursor to the correct line based on the worker index
+	fmt.Printf("\033[%d;0H\033[K[%d/%d] %s [%s] %.1f%% (%.1f/%.1f MB)",
+		pw.index, pw.index, pw.totalFiles, pw.filename, bar, percentage, writtenMB, totalMB)
+
+	// If download is complete, mark with a checkmark and clear the line
 	if pw.written == pw.total {
-		fmt.Println(" ✓")
+		fmt.Printf(" ✓")
+		// Clear this progress bar after a short delay
+		go func() {
+			time.Sleep(2 * time.Second)
+			mutex.Lock()
+			fmt.Printf("\033[%d;0H\033[K", pw.index) // Clear the line
+			mutex.Unlock()
+		}()
+
+		// Move cursor back to bottom
+		fmt.Printf("\033[%d;0H", pw.totalFiles+1)
 	}
 }

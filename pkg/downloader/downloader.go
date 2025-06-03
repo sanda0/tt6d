@@ -16,6 +16,15 @@ import (
 
 // Download downloads multiple files
 func Download(links []string, downloadFolder string, concurrentDownloads int) error {
+	// Clear screen and hide cursor
+	fmt.Print("\033[2J\033[H\033[?25l")
+	defer fmt.Print("\033[?25h") // Show cursor when done
+
+	// Create empty progress bars
+	for i := 0; i < concurrentDownloads; i++ {
+		fmt.Println()
+	}
+
 	if concurrentDownloads == 1 {
 		// Sequential download
 		for i, link := range links {
@@ -27,22 +36,46 @@ func Download(links []string, downloadFolder string, concurrentDownloads int) er
 		// Concurrent download
 		var wg sync.WaitGroup
 		semaphore := make(chan struct{}, concurrentDownloads)
+		activeSlots := make([]bool, concurrentDownloads)
+		var mutex sync.Mutex
 
 		for i, link := range links {
 			wg.Add(1)
 			go func(index int, mp4URL string) {
 				defer wg.Done()
 				semaphore <- struct{}{}
-				defer func() { <-semaphore }()
 
-				if err := downloadFile(mp4URL, downloadFolder, index+1, len(links)); err != nil {
-					fmt.Printf("\n[%d/%d] Error downloading %s: %v\n", index+1, len(links), mp4URL, err)
+				// Find an available slot
+				mutex.Lock()
+				slotID := 0
+				for i, inUse := range activeSlots {
+					if !inUse {
+						slotID = i
+						activeSlots[i] = true
+						break
+					}
 				}
+				mutex.Unlock()
+
+				// Use slot number + 1 as display line
+				if err := downloadFile(mp4URL, downloadFolder, slotID+1, len(links)); err != nil {
+					fmt.Printf("\033[%d;0H\033[K[%d/%d] Error downloading %s: %v",
+						slotID+1, index+1, len(links), mp4URL, err)
+				}
+
+				mutex.Lock()
+				activeSlots[slotID] = false // Free up the slot
+				mutex.Unlock()
+
+				<-semaphore
 			}(i, link)
 		}
 
 		wg.Wait()
 	}
+
+	// Move cursor to bottom of progress area and print completion message
+	fmt.Printf("\033[%d;0H\nAll downloads completed!\n", concurrentDownloads+1)
 	return nil
 }
 
